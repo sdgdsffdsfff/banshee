@@ -76,9 +76,7 @@ type Config struct {
 }
 
 type configStorage struct {
-	Path                  string  `json:"path" yaml:"path"`
-	EnableMetricCache     bool    `json:"enableMetricCache" yaml:"enable_metric_cache"`
-	MetricCachePercentage float64 `json:"metricCachePercentage" yaml:"metric_cache_percentage"`
+	Path string `json:"path" yaml:"path"`
 }
 
 type configDetector struct {
@@ -118,8 +116,6 @@ func New() *Config {
 	c.Period = DefaultPeriod
 	c.Expiration = DefaultExpiration
 	c.Storage.Path = "./data"
-	c.Storage.EnableMetricCache = true
-	c.Storage.MetricCachePercentage = 1.0
 	c.Detector.Port = 2015
 	c.Detector.TrendingFactor = DefaultTrendingFactor
 	c.Detector.FilterOffset = DefaultFilterOffset
@@ -165,8 +161,6 @@ func (c *Config) Copy() *Config {
 	cfg.Period = c.Period
 	cfg.Expiration = c.Expiration
 	cfg.Storage.Path = c.Storage.Path
-	cfg.Storage.EnableMetricCache = c.Storage.EnableMetricCache
-	cfg.Storage.MetricCachePercentage = c.Storage.MetricCachePercentage
 	cfg.Detector.Port = c.Detector.Port
 	cfg.Detector.TrendingFactor = c.Detector.TrendingFactor
 	cfg.Detector.FilterOffset = c.Detector.FilterOffset
@@ -176,7 +170,6 @@ func (c *Config) Copy() *Config {
 	cfg.Detector.DefaultThresholdMaxs = c.Detector.DefaultThresholdMaxs
 	cfg.Detector.DefaultThresholdMins = c.Detector.DefaultThresholdMins
 	cfg.Detector.FillBlankZeros = c.Detector.FillBlankZeros
-	cfg.Detector.EnableIntervalHitLimit = c.Detector.EnableIntervalHitLimit
 	cfg.Detector.IntervalHitLimit = c.Detector.IntervalHitLimit
 	cfg.Webapp.Port = c.Webapp.Port
 	cfg.Webapp.Auth = c.Webapp.Auth
