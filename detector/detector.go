@@ -106,7 +106,7 @@ func (d *Detector) handle(conn net.Conn) {
 			continue
 		}
 		if err = m.Validate(); err != nil {
-			log.Errorf("invalid metric %v : %v, skipping..", m.Name, err)
+			log.Debugf("invalid metric %v : %v, skipping..", m.Name, err)
 			continue
 		}
 		d.process(m)
@@ -317,11 +317,15 @@ func (d *Detector) analyze(idx *models.Index, m *models.Metric, rules []*models.
 	if idx != nil {
 		m.LinkTo(idx)
 	}
-	bms, err := d.values(m, fz)
-	if err != nil {
-		return nil
+	if models.AnyTrendRelated(rules) {
+		bms, err := d.values(m, fz)
+		if err != nil {
+			return nil
+		}
+		algo.DivDaySigma(m, bms)
+	} else {
+		m.Average = m.Value
 	}
-	algo.DivDaySigma(m, bms)
 	return d.nextIdx(idx, m, d.pickTrendingFactor(rules))
 }
 
