@@ -11,6 +11,11 @@ import (
 
 // ResponseJSONOK writes ok response.
 func ResponseJSONOK(w http.ResponseWriter, v interface{}) error {
+	if v == nil {
+		v = map[string]string{
+			"message": "OK",
+		}
+	}
 	return ResponseJSON(w, http.StatusOK, v)
 }
 
@@ -38,4 +43,15 @@ func ResponseError(w http.ResponseWriter, err *WebError) error {
 // RequestBind binds request data into value.
 func RequestBind(r *http.Request, v interface{}) error {
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// RequestFileBind binds request file data into value.
+func RequestFileBind(r *http.Request, v interface{}) error {
+	r.ParseMultipartForm(32 << 20)
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return json.NewDecoder(file).Decode(v)
 }

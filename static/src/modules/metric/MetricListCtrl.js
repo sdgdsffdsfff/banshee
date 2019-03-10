@@ -111,19 +111,19 @@ module.exports = function($scope, $rootScope, $timeout, $stateParams,
    */
   function watchAll() {
     $scope.$watchGroup(
-        ['filter.datetime', 'filter.limit', 'filter.sort', 'filter.type'],
-        function() { buildCubism(); });
-  };
+      ['filter.datetime', 'filter.limit', 'filter.sort', 'filter.type'],
+      function() { buildCubism(); });
+  }
 
 
   function loadData() {
     Project.getAllProjects().$promise.then(function(res) {
       var projectId = parseInt($stateParams.project);
       $scope.projects = res;
-      var teams = {}
+      var teams = {};
       for(var i in $scope.projects){
         var project = $scope.projects[i];
-        teams[project.id] = project.teamID
+        teams[project.id] = project.teamID;
       }
       $scope.teams = teams;
       if (projectId) {
@@ -226,7 +226,7 @@ module.exports = function($scope, $rootScope, $timeout, $stateParams,
       }
 
       str = [
-        '<a href="#/main?pattern=' + currentEl.name + '" class="' + className +
+        '<a href="#/metric?pattern=' + currentEl.name + '" class="' + className +
             '">',
         getTextByTrend(currentEl.score),
         currentEl.name,

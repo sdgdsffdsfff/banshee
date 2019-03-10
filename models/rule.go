@@ -3,9 +3,10 @@
 package models
 
 import (
-	"github.com/eleme/banshee/config"
 	"path/filepath"
 	"time"
+
+	"github.com/eleme/banshee/config"
 )
 
 // Rule Levels
@@ -14,6 +15,18 @@ const (
 	RuleLevelMiddle
 	RuleLevelHigh
 )
+
+// Rule types
+const (
+	RULEADD    = "add"
+	RULEDELETE = "delete"
+)
+
+// Message is a add or delete event.
+type Message struct {
+	Type string `json:"type"`
+	Rule *Rule  `json:"rule"`
+}
 
 // Rule is a type to describe alerter rule.
 type Rule struct {
@@ -24,7 +37,7 @@ type Rule struct {
 	// Project belongs to
 	ProjectID int `sql:"index;not null" json:"projectID"`
 	// Pattern is a wildcard string
-	Pattern string `sql:"size:400;not null;unique" json:"pattern"`
+	Pattern string `sql:"size:400;not null" json:"pattern"`
 	// Trend
 	TrendUp   bool `json:"trendUp"`
 	TrendDown bool `json:"trendDown"`
@@ -126,6 +139,11 @@ func (rule *Rule) Test(m *Metric, idx *Index, cfg *config.Config) bool {
 			return false
 		}
 	}
+	if rule.TrackIdle {
+		if m.Value == 0 && m.Average == 0 && m.Score == 0 {
+			return true
+		}
+	}
 	// Default thresholds.
 	var defaultThresholdMax float64
 	var defaultThresholdMin float64
@@ -188,4 +206,14 @@ func (rule *Rule) SetNumMetrics(n int) {
 	rule.Lock()
 	defer rule.Unlock()
 	rule.NumMetrics = n
+}
+
+// AnyTrendRelated checks if all rules is trend related.
+func AnyTrendRelated(rules []*Rule) bool {
+	for _, rule := range rules {
+		if rule.IsTrendRelated() {
+			return true
+		}
+	}
+	return false
 }

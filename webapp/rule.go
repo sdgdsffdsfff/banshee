@@ -10,22 +10,23 @@ import (
 	"github.com/eleme/banshee/models"
 	"github.com/jinzhu/gorm"
 	"github.com/julienschmidt/httprouter"
-	"github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 // createRule request
 type createRuleRequest struct {
-	Pattern       string  `json:"pattern"`
-	TrendUp       bool    `json:"trendUp"`
-	TrendDown     bool    `json:"trendDown"`
-	ThresholdMax  float64 `json:"thresholdMax"`
-	ThresholdMin  float64 `json:"thresholdMin"`
-	Comment       string  `json:"comment"`
-	Level         int     `json:"level"`
-	Disabled      bool    `json:"disabled"`
-	DisabledFor   int     `json:"disabledFor"` // in Minute
-	TrackIdle     bool    `json:"trackIdle"`
-	NeverFillZero bool    `json:"neverFillZero"`
+	Pattern       string    `json:"pattern"`
+	TrendUp       bool      `json:"trendUp"`
+	TrendDown     bool      `json:"trendDown"`
+	ThresholdMax  float64   `json:"thresholdMax"`
+	ThresholdMin  float64   `json:"thresholdMin"`
+	Comment       string    `json:"comment"`
+	Level         int       `json:"level"`
+	Disabled      bool      `json:"disabled"`
+	DisabledFor   int       `json:"disabledFor"` // in Minute
+	DisabledAt    time.Time `json:"disabledAt"`
+	TrackIdle     bool      `json:"trackIdle"`
+	NeverFillZero bool      `json:"neverFillZero"`
 }
 
 // createRule creates a rule.
@@ -67,11 +68,15 @@ func createRule(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		ResponseError(w, NewValidationWebError(err))
 		return
 	}
+	if err := db.Admin.DB().Where("project_id = ? AND pattern = ?", projectID, req.Pattern).First(&models.Rule{}).Error; err == nil {
+		ResponseError(w, ErrDuplicateRulePattern)
+		return
+	}
 	// Find project.
 	proj := &models.Project{}
 	if err := db.Admin.DB().First(proj, projectID).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrProjectNotFound)
 			return
 		default:
@@ -106,9 +111,6 @@ func createRule(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 			case sqlite3.ErrConstraintPrimaryKey:
 				ResponseError(w, ErrPrimaryKey)
 				return
-			case sqlite3.ErrConstraintUnique:
-				ResponseError(w, ErrDuplicateRulePattern)
-				return
 			}
 		}
 		// Unexcepted error.
@@ -122,6 +124,93 @@ func createRule(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ResponseJSONOK(w, rule)
 }
 
+type ruleImportStatus struct {
+	Rule   string
+	Status error
+}
+
+func importProjectRules(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	// Params
+	projectID, err := strconv.Atoi(ps.ByName("id"))
+	if err != nil || projectID <= 0 {
+		ResponseError(w, ErrProjectID)
+		return
+	}
+	if err := db.Admin.DB().First(&models.Project{}, projectID).Error; err != nil {
+		switch err {
+		case gorm.ErrRecordNotFound:
+			ResponseError(w, ErrProjectNotFound)
+			return
+		default:
+			ResponseError(w, NewUnexceptedWebError(err))
+			return
+		}
+	}
+	// Request
+	var req []createRuleRequest
+	if err := RequestFileBind(r, &req); err != nil {
+		ResponseError(w, ErrBadRequest)
+		return
+	}
+	status := make([]ruleImportStatus, len(req), len(req))
+	for i := range req {
+		status[i].Rule = req[i].Pattern
+		if err := models.ValidateRulePattern(req[i].Pattern); err != nil {
+			status[i].Status = err
+			continue
+		}
+		if len(req[i].Comment) <= 0 {
+			status[i].Status = ErrRuleNoComment
+			continue
+		}
+		if !req[i].TrendUp && !req[i].TrendDown && req[i].ThresholdMax == 0 && req[i].ThresholdMin == 0 {
+			status[i].Status = ErrRuleNoCondition
+			continue
+		}
+		if err := models.ValidateRuleLevel(req[i].Level); err != nil {
+			status[i].Status = err
+			continue
+		}
+		if err := db.Admin.DB().Where("project_id = ? AND pattern = ?", projectID, req[i].Pattern).First(&models.Rule{}).Error; err == nil {
+			status[i].Status = ErrDuplicateRulePattern
+			continue
+		}
+
+		rule := &models.Rule{
+			ProjectID:     projectID,
+			Pattern:       req[i].Pattern,
+			TrendUp:       req[i].TrendUp,
+			TrendDown:     req[i].TrendDown,
+			ThresholdMax:  req[i].ThresholdMax,
+			ThresholdMin:  req[i].ThresholdMin,
+			Comment:       req[i].Comment,
+			Level:         req[i].Level,
+			Disabled:      req[i].Disabled,
+			DisabledFor:   req[i].DisabledFor,
+			DisabledAt:    req[i].DisabledAt,
+			TrackIdle:     req[i].TrackIdle,
+			NeverFillZero: req[i].NeverFillZero,
+		}
+		if err := db.Admin.DB().Create(rule).Error; err != nil {
+			sqliteErr, ok := err.(sqlite3.Error)
+			if ok {
+				switch sqliteErr.ExtendedCode {
+				case sqlite3.ErrConstraintNotNull:
+					status[i].Status = ErrNotNull
+					continue
+				case sqlite3.ErrConstraintPrimaryKey:
+					status[i].Status = ErrPrimaryKey
+					continue
+				}
+			}
+			status[i].Status = err
+			continue
+		}
+		db.Admin.RulesCache.Put(rule)
+	}
+	ResponseJSONOK(w, status)
+}
+
 // deleteRule deletes a rule from a project.
 func deleteRule(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// Params
@@ -133,7 +222,7 @@ func deleteRule(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// Delete
 	if err := db.Admin.DB().Delete(&models.Rule{ID: id}).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrRuleNotFound)
 			return
 		default:

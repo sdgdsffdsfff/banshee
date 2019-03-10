@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,32 +68,30 @@ func (al *Alerter) Start() {
 }
 
 // hourInRange returns true if given hour is in range [start, end).
+// if start == end means all day will alert.
 // Examples:
-//	hourInRange(10, 7, 19) // true
-//	hourInRange(10, 20, 19) // false
+//  hourInRange(10, 7, 19) // true
+//  hourInRange(10, 20, 19) // false
+//  hourInRange(0, 0, 0) // false
 func hourInRange(hour, start, end int) bool {
 	switch {
 	case start < end:
 		return start <= hour && hour < end
 	case start > end:
 		return start <= hour || hour < end
-	case start == end:
-		return start == hour
+	default:
+		return false
 	}
-	return false
 }
 
 // shouldProjBeSilent returns true if given project should be silent at this
 // time.
 func (al *Alerter) shoudProjBeSilent(proj *models.Project) bool {
-	var start, end int
-	if proj.EnableSilent {
-		start = proj.SilentTimeStart
-		end = proj.SilentTimeEnd
-	} else {
-		start = al.cfg.Alerter.DefaultSilentTimeRange[0]
-		end = al.cfg.Alerter.DefaultSilentTimeRange[1]
+	if !proj.EnableSilent {
+		return false
 	}
+	start := proj.SilentTimeStart
+	end := proj.SilentTimeEnd
 	now := time.Now().Hour()
 	return hourInRange(now, start, end)
 }
@@ -131,6 +130,25 @@ func (al *Alerter) getUniversalUsers() (univs []models.User, err error) {
 		return
 	}
 	return
+}
+
+// getUniversalWebHooks returns universal webhooks.
+func (al *Alerter) getUniversalWebHooks() (univs []models.WebHook, err error) {
+	if err = al.db.Admin.DB().Where("universal = ?", true).Find(&univs).Error; err != nil {
+		return
+	}
+	return
+}
+
+// checkBlackList returns true is given metric match rule in the blacklist.
+func (al *Alerter) checkBlackList(m *models.Metric) bool {
+	for _, p := range al.cfg.Alerter.BlackList {
+		matched, _ := filepath.Match(p, m.Name)
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // checkOneDayAlerts returns true if given metric exceeds the one day
@@ -239,7 +257,12 @@ func (al *Alerter) getUsersByProj(proj *models.Project) (users []models.User, er
 }
 
 func (al *Alerter) getWebHooksByProj(proj *models.Project) (webHooks []models.WebHook, err error) {
+	var univs []models.WebHook
+	if univs, err = al.getUniversalWebHooks(); err != nil {
+		return
+	}
 	err = al.db.Admin.DB().Model(proj).Related(&webHooks, "WebHooks").Error
+	webHooks = append(webHooks, univs...)
 	return
 }
 
@@ -256,7 +279,11 @@ func (al *Alerter) work() {
 	for {
 		ev := <-al.In
 		ew := models.NewWrapperOfEvent(ev) // Avoid locks
-		if al.checkAlertAt(ew.Metric) {    // Check alert interval
+		if al.checkBlackList(ew.Metric) {  // Check blacklist
+			log.Infof("metric %v is in the blacklist", ew.Metric.Name)
+			continue
+		}
+		if al.checkAlertAt(ew.Metric) { // Check alert interval
 			log.Infof("metric %v does not reaches the minimal alert interval %v", ew.Metric.Name, al.cfg.Alerter.Interval)
 			continue
 		}
@@ -298,11 +325,13 @@ func (al *Alerter) work() {
 			log.Errorf("get user from project %v: %v", ew.Project.Name, err)
 			continue
 		}
-		for _, user := range users {
+		ew.AlarmUsers = make([]*models.User, 0, len(users))
+		for i, user := range users {
 			ew.User = &user
 			if ew.Rule.Level < user.RuleLevel {
 				continue
 			}
+			ew.AlarmUsers = append(ew.AlarmUsers, &users[i])
 			if len(al.cfg.Alerter.Command) == 0 {
 				log.Warnf("alert command not configured")
 				continue
@@ -320,6 +349,9 @@ func (al *Alerter) work() {
 		}
 		ew.User = nil
 		for _, hook := range webHooks {
+			if ew.Rule.Level < hook.RuleLevel {
+				continue
+			}
 			notifier, ok := Notifiers[hook.Type]
 			if !ok {
 				log.Warnf("not found notifier %s", hook.Name)
@@ -330,7 +362,6 @@ func (al *Alerter) work() {
 				log.Errorf("notifier %s: %v", hook.Name, err)
 			}
 			log.Infof("send to webhook %s with %s ok", hook.Name, ew.Metric.Name)
-
 		}
 		if len(users) != 0 || len(ew.Project.WebHooks) != 0 {
 			health.IncrNumAlertingEvents(1)

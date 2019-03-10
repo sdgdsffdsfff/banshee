@@ -93,12 +93,21 @@ type Config struct {
 	Webapp     configWebapp   `json:"webapp" yaml:"webapp"`
 	Alerter    configAlerter  `json:"alerter" yaml:"alerter"`
 	Notifier   configNotifier `json:"notifier" yaml:"notifier"`
+	Cluster    configCluster  `json:"cluster" yaml:"cluster"`
 }
 
 type configStorage struct {
-	Path string `json:"path" yaml:"path"`
+	Path  string      `json:"path" yaml:"path"`
+	Admin configAdmin `json:"admin" yaml:"admin"`
 }
 
+type configAdmin struct {
+	Host     string `json:"host" yaml:"host"`
+	Port     int    `json:"port" yaml:"port"`
+	User     string `json:"user" yaml:"user"`
+	Password string `json:"password" yaml:"password"`
+	DBName   string `json:"dbName" yaml:"dbname"`
+}
 type configDetector struct {
 	Port                      int                `json:"port" yaml:"port"`
 	TrendingFactorLowLevel    float64            `json:"trendingFactorLowLevel" yaml:"trending_factor_low_level"`
@@ -110,6 +119,7 @@ type configDetector struct {
 	BlackList                 []string           `json:"blackList" yaml:"blacklist"`
 	EnableIntervalHitLimit    bool               `json:"enableIntervalHitLimit" yaml:"enable_interval_hit_limit"`
 	IntervalHitLimit          uint32             `json:"intervalHitLimit" yaml:"interval_hit_limit"`
+	IntervalLimitIgnoreList   []string           `json:"intervalLimitIgnoreList" yaml:"interval_limit_ignore_list"`
 	DefaultThresholdMaxs      map[string]float64 `json:"defaultThresholdMaxs" yaml:"default_threshold_maxs"`
 	DefaultThresholdMins      map[string]float64 `json:"defaultThresholdMins" yaml:"default_threshold_mins"`
 	FillBlankZeros            []string           `json:"fillBlankZeros" yaml:"fill_blank_zeros"`
@@ -131,18 +141,27 @@ type configWebapp struct {
 }
 
 type configAlerter struct {
-	Command                string `json:"command" yaml:"command"`
-	ExecCommandTimeout     int    `json:"execCommandTimeOut" yaml:"exec_command_time_out"`
-	Workers                int    `json:"workers" yaml:"workers"`
-	Interval               uint32 `json:"interval" yaml:"interval"`
-	AlertCheckInterval     uint32 `json:"alert_check_interval" yaml:"alert_check_interval"`
-	NotifyAfter            int    `json:"notify_after" yaml:"notify_after"`
-	OneDayLimit            uint32 `json:"oneDayLimit" yaml:"one_day_limit"`
-	DefaultSilentTimeRange []int  `json:"defaultSilentTimeRange" yaml:"default_silent_time_range"`
+	Command                string   `json:"command" yaml:"command"`
+	ExecCommandTimeout     int      `json:"execCommandTimeOut" yaml:"exec_command_time_out"`
+	Workers                int      `json:"workers" yaml:"workers"`
+	Interval               uint32   `json:"interval" yaml:"interval"`
+	AlertCheckInterval     uint32   `json:"alert_check_interval" yaml:"alert_check_interval"`
+	NotifyAfter            int      `json:"notify_after" yaml:"notify_after"`
+	OneDayLimit            uint32   `json:"oneDayLimit" yaml:"one_day_limit"`
+	DefaultSilentTimeRange []int    `json:"defaultSilentTimeRange" yaml:"default_silent_time_range"`
+	BlackList              []string `json:"blackList" yaml:"blacklist"`
 }
 
 type configNotifier struct {
 	SlackURL string `json:"slackURL" yaml:"slack_url"`
+}
+
+type configCluster struct {
+	Master       bool   `json:"master" yaml:"master"`
+	QueueDSN     string `json:"queueDSN" yaml:"queue_dsn"`
+	VHost        string `json:"vHost" yaml:"v_host"`
+	ExchangeName string `json:"exchangeName" yaml:"exchange_name"`
+	QueueName    string `json:"queueName" yaml:"queue_name"`
 }
 
 // New creates a Config with default values.
@@ -152,6 +171,11 @@ func New() *Config {
 	c.Period = DefaultPeriod
 	c.Expiration = DefaultExpiration
 	c.Storage.Path = "./data"
+	c.Storage.Admin.Host = "127.0.0.1"
+	c.Storage.Admin.Port = 3306
+	c.Storage.Admin.User = "banshee"
+	c.Storage.Admin.Password = ""
+	c.Storage.Admin.DBName = "banshee"
 	c.Detector.Port = 2015
 	c.Detector.TrendingFactorLowLevel = DefaultTrendingFactorLowLevel
 	c.Detector.TrendingFactorMiddleLevel = DefaultTrendingFactorMiddleLevel
@@ -184,6 +208,8 @@ func New() *Config {
 	c.Alerter.NotifyAfter = DefaultNotifyAfter
 	c.Alerter.OneDayLimit = DefaultAlerterOneDayLimit
 	c.Alerter.DefaultSilentTimeRange = []int{DefaultSilentTimeStart, DefaultSilentTimeEnd}
+	c.Alerter.BlackList = []string{}
+	c.Cluster.Master = true
 	return c
 }
 
@@ -208,6 +234,7 @@ func (c *Config) Copy() *Config {
 	cfg.Period = c.Period
 	cfg.Expiration = c.Expiration
 	cfg.Storage.Path = c.Storage.Path
+	cfg.Storage.Admin = c.Storage.Admin
 	cfg.Detector.Port = c.Detector.Port
 	cfg.Detector.TrendingFactorLowLevel = c.Detector.TrendingFactorLowLevel
 	cfg.Detector.TrendingFactorMiddleLevel = c.Detector.TrendingFactorMiddleLevel
@@ -230,6 +257,7 @@ func (c *Config) Copy() *Config {
 	cfg.Webapp.Auth = c.Webapp.Auth
 	cfg.Webapp.Static = c.Webapp.Static
 	cfg.Webapp.Language = c.Webapp.Language
+	cfg.Webapp.URLPrefix = c.Webapp.URLPrefix
 	cfg.Webapp.PrivateDocURL = c.Webapp.PrivateDocURL
 	cfg.Webapp.GraphiteURL = c.Webapp.GraphiteURL
 	cfg.Alerter.Command = c.Alerter.Command
@@ -240,6 +268,9 @@ func (c *Config) Copy() *Config {
 	cfg.Alerter.DefaultSilentTimeRange = c.Alerter.DefaultSilentTimeRange
 	cfg.Alerter.NotifyAfter = c.Alerter.NotifyAfter
 	cfg.Alerter.AlertCheckInterval = c.Alerter.AlertCheckInterval
+	cfg.Alerter.BlackList = c.Alerter.BlackList
+	cfg.Notifier.SlackURL = c.Notifier.SlackURL
+	cfg.Cluster = c.Cluster
 	return cfg
 }
 
@@ -254,10 +285,7 @@ func (c *Config) Validate() error {
 	if err := c.Webapp.validateWebapp(); err != nil {
 		return err
 	}
-	if err := c.Alerter.validateAlerter(); err != nil {
-		return err
-	}
-	return nil
+	return c.Alerter.validateAlerter()
 }
 
 func (c *Config) validateGlobals() error {

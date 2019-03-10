@@ -39,16 +39,17 @@ Key-Value design in leveldb:
 package metricdb
 
 import (
-	"github.com/eleme/banshee/models"
-	"github.com/eleme/banshee/util/log"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/util"
 	"io/ioutil"
 	"os"
 	"path"
 	"sort"
 	"strconv"
 	"sync"
+
+	"github.com/eleme/banshee/models"
+	"github.com/eleme/banshee/util/log"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 // storage is the actual data store handler.
@@ -265,6 +266,7 @@ func (s *storage) get(name string, link, start, end uint32) ([]*models.Metric, e
 	startKey := encodeKey(&models.Metric{Link: link, Stamp: start})
 	endKey := encodeKey(&models.Metric{Link: link, Stamp: end})
 	iter := s.db.NewIterator(&util.Range{Start: startKey, Limit: endKey}, nil)
+	defer iter.Release()
 	var ms []*models.Metric
 	for iter.Next() {
 		m := &models.Metric{Name: name}
@@ -278,7 +280,7 @@ func (s *storage) get(name string, link, start, end uint32) ([]*models.Metric, e
 		}
 		ms = append(ms, m)
 	}
-	return ms, nil
+	return ms, iter.Error()
 }
 
 // Get metrics in a timestamp range, the range is left open and right closed.

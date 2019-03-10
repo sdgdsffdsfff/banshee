@@ -55,29 +55,88 @@ Config
    }
    ```
 
+Team
+-------
+
+1. Get all teams.
+
+    ```
+    GET /api/teams
+    
+    200
+    [
+        {
+            "id": 1,
+            "name": "Default",
+            "numProjects": 0
+        },
+        ...
+    ]
+    ```
+2. Create team (basic auth required).
+
+   ```
+   POST /api/team -d {"name": "myNewTeam"}   
+   
+   200
+   {
+       "id": 2,
+       "name": "myNewTeam"
+   }
+   ```
+3. Get team by id.
+
+    ```
+    GET /api/team/:id
+    
+    200
+    {
+        "id": 1,
+        "name": "Default"
+    }
+    ```
+4. Update team by id (basic auth required).
+
+    ```
+    PATCH /api/team/:id -d {"name": "newName"}
+    
+    200
+    {
+        "id": 1,
+        "name": "newName"
+    }
+    ```
+5. Delete team by id (basic auth required).
+   
+   ```
+   DELETE /api/team/:id
+   
+   200
+   ```
+
 Project
 -------
 
-1. Get all projects.
+1. Get projects by team id.
+
+    ```
+    GET /api/team/:id/projects
+    
+    200
+    [
+        {
+            "id": 1,
+            "name": "test",
+            "numRules": 2,
+        },
+        ...
+    ]
+     ```
+     
+2. Create project by team id (basic auth required).
 
    ```
-   GET /api/projects
-
-   200
-   [
-     {
-        "id": 1,
-        "name": "test",
-        "numRules": 2
-     },
-     ...
-   ]
-   ```
-
-2. Create project (basic auth required).
-
-   ```
-   POST /api/project -d {"name": "myNewProject"}
+   POST /api/team/:id/project -d {"name": "myNewProject"}
 
    200
    {
@@ -85,7 +144,8 @@ Project
      "name": "foo",
      "enableSilent": false,
      "silentTimeEnd": 0,
-     "silentTimeStart": 0
+     "silentTimeStart": 0,
+     "teamID": 1
    }
    ```
 
@@ -100,22 +160,24 @@ Project
      "id": 1,
      "name": "test",
      "silentTimeEnd": 0,
-     "silentTimeStart": 0
+     "silentTimeStart": 0,
+     "teamID": 1
    }
    ```
 
 4. Update project (basic auth required).
 
    ```
-   PATCH /api/project/:id -d {"name": "newName"}
+   PATCH /api/project/:id -d {"name": "newName","teamID":1,"silentTimeStart":1,"silentTimeEnd":10}
 
    200
    {
      "enableSilent": false,
      "id": 1,
      "name": "newName",
-     "silentTimeEnd": 0,
-     "silentTimeStart": 0
+     "silentTimeEnd": 10,
+     "silentTimeStart": 1,
+     "teamID": 1
    }
    ```
 
@@ -139,12 +201,30 @@ Project
        "id": 1,
        "name": "test",
        "silentTimeEnd": 0,
-       "silentTimeStart": 0
+       "silentTimeStart": 0,
+       "teamID": 1
      },
      ...
    ]
    ```
 
+7. Get all projects 
+   
+   ```
+   GET /api/projects
+   
+   200
+   [
+       {
+           "id": 1,
+           "name": "test",
+           "numRules": 2,
+           "teamID": 1
+       },
+       ...
+   ]
+   ```
+   
 User
 ----
 
@@ -244,8 +324,16 @@ User
 
    200
    ```
+6. Add user to project by username (basic auth required).
+   
+   ```
+   POST /api/project/:id/user -d { name :"admin" }
+   
+   200
+   ```
 
-6. Get users by project id (basic auth required).
+
+7. Get users by project id (basic auth required).
 
    ```
    GET /api/project/:id/users
@@ -264,6 +352,13 @@ User
      },
      ...
    ]
+   ```
+
+8. Copy rules bewteen users based on userID (basic auth required).
+   ```
+   POST /api/users/copy -d {"from": 1 ,"to": 2 }
+   
+   200
    ```
 
 Rule
@@ -535,6 +630,10 @@ WebHook
   {
     "id": "ab372c88c08ada73bd35feea740896d340de770e",
     "comment": "add note",
+    "timestamp": 1505149763562,
+    "text": "{低等级 20:39:00 test 4 efe0f31} test大于设定阈值 当前值1.11,阈值1",
+    "grafanaLink": "grafanaLink",
+    "ruleLink": "ruleLink",
     "metric": {
       "name": "timer.count_ps.note.add",
       "stamp": 1477361415,
@@ -571,7 +670,20 @@ WebHook
     "team": {
       "id": 4,
       "name": "note"
-     }
+     },
+    "alarmUsers": [
+               {
+                 "email": "xiaoming@gmail.com",
+                 "enableEmail": false,
+                 "enablePhone": true,
+                 "id": 2,
+                 "name": "xiaoming",
+                 "phone": "18718718718",
+                 "ruleLevel": 2,
+                 "universal": true
+               },
+               ...
+    ]
     }
   ```
 

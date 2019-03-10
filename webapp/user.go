@@ -3,12 +3,13 @@
 package webapp
 
 import (
+	"net/http"
+	"strconv"
+
 	"github.com/eleme/banshee/models"
 	"github.com/jinzhu/gorm"
 	"github.com/julienschmidt/httprouter"
 	"github.com/mattn/go-sqlite3"
-	"net/http"
-	"strconv"
 )
 
 // getUsers returns all users.
@@ -33,7 +34,7 @@ func getUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	user := &models.User{}
 	if err := db.Admin.DB().First(user, id).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrUserNotFound)
 			return
 		default:
@@ -133,14 +134,16 @@ func deleteUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		ResponseError(w, NewUnexceptedWebError(err))
 		return
 	}
-	if err := db.Admin.DB().Model(user).Association("Projects").Delete(projs).Error; err != nil {
-		ResponseError(w, NewUnexceptedWebError(err))
-		return
+	if len(projs) > 0 {
+		if err := db.Admin.DB().Model(user).Association("Projects").Delete(projs).Error; err != nil {
+			ResponseError(w, NewUnexceptedWebError(err))
+			return
+		}
 	}
 	// Delete.
 	if err := db.Admin.DB().Delete(user).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrUserNotFound)
 			return
 		default:
@@ -148,6 +151,7 @@ func deleteUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 			return
 		}
 	}
+	ResponseJSONOK(w, nil)
 }
 
 // updateUser request
@@ -195,7 +199,7 @@ func updateUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	user := &models.User{}
 	if err := db.Admin.DB().First(user, id).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrUserNotFound)
 			return
 		default:
@@ -212,7 +216,7 @@ func updateUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	user.Universal = req.Universal
 	user.RuleLevel = req.RuleLevel
 	if err := db.Admin.DB().Save(user).Error; err != nil {
-		if err == gorm.RecordNotFound {
+		if err == gorm.ErrRecordNotFound {
 			// User not found.
 			ResponseError(w, ErrUserNotFound)
 			return
@@ -248,7 +252,7 @@ func getUserProjects(w http.ResponseWriter, r *http.Request, ps httprouter.Param
 	user := &models.User{}
 	if err := db.Admin.DB().First(user, id).Error; err != nil {
 		switch err {
-		case gorm.RecordNotFound:
+		case gorm.ErrRecordNotFound:
 			ResponseError(w, ErrUserNotFound)
 			return
 		default:
@@ -272,4 +276,89 @@ func getUserProjects(w http.ResponseWriter, r *http.Request, ps httprouter.Param
 		}
 	}
 	ResponseJSONOK(w, projs)
+}
+
+type copyUserRequest struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+func copyUser(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	req := &copyUserRequest{}
+	if err := RequestBind(r, req); err != nil {
+		ResponseError(w, ErrBadRequest)
+		return
+	}
+	var userA, userB models.User
+	if err := db.Admin.DB().First(&userA, req.From).Error; err != nil {
+		switch err {
+		case gorm.ErrRecordNotFound:
+			ResponseError(w, ErrUserNotFound)
+			return
+		default:
+			ResponseError(w, NewUnexceptedWebError(err))
+			return
+		}
+	}
+	if err := db.Admin.DB().First(&userB, req.To).Error; err != nil {
+		switch err {
+		case gorm.ErrRecordNotFound:
+			ResponseError(w, ErrUserNotFound)
+			return
+		default:
+			ResponseError(w, NewUnexceptedWebError(err))
+			return
+		}
+	}
+	// upgrade user B from user A
+	if userA.EnableEmail {
+		userB.EnableEmail = true
+	}
+	if userA.EnablePhone {
+		userB.EnablePhone = true
+	}
+	if userA.Universal {
+		userB.Universal = true
+	}
+	if userA.RuleLevel > userB.RuleLevel {
+		userB.RuleLevel = userA.RuleLevel
+	}
+	err := db.Admin.DB().Save(&userB).Error
+	if err != nil {
+		ResponseError(w, NewUnexceptedWebError(err))
+		return
+	}
+	// copy projects  to user b
+	var projUserA, projUserB []projectUser
+	err = db.Admin.DB().Table("project_users").Where("user_id = ?", userA.ID).Find(&projUserA).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		ResponseError(w, NewUnexceptedWebError(err))
+		return
+	}
+	err = db.Admin.DB().Table("project_users").Where("user_id = ?", userB.ID).Find(&projUserB).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		ResponseError(w, NewUnexceptedWebError(err))
+		return
+	}
+	projsMB := make(map[int]bool)
+	for _, proj := range projUserB {
+		projsMB[proj.ProjectID] = true
+	}
+	projs := make(map[int]bool)
+	for _, proj := range projUserA {
+		if _, ok := projsMB[proj.ProjectID]; !ok {
+			projs[proj.ProjectID] = true
+		}
+	}
+	for key := range projs {
+		err := db.Admin.DB().Table("project_users").Save(&projectUser{
+			UserID:    userB.ID,
+			ProjectID: key,
+		}).Error
+		if err != nil {
+			ResponseError(w, NewUnexceptedWebError(err))
+			return
+		}
+	}
+	ResponseJSONOK(w, userB)
 }
